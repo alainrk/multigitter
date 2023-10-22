@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 
-	gitHttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-
-	"github.com/go-git/go-git/v5"
 	"github.com/google/go-github/github"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -21,7 +19,6 @@ func main() {
 		log.Fatalf("Error loading .env file")
 	}
 
-	username := os.Getenv("GITHUB_USERNAME")
 	token := os.Getenv("GITHUB_TOKEN")
 	// password := os.Getenv("GITHUB_PASSWORD")
 
@@ -33,35 +30,80 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
-	fmt.Println("GitHub client created:", client)
+	l, _, err := client.Repositories.List(ctx, "", nil)
+	if err != nil {
+		log.Fatalf("Error listing repos: %s", err)
+	}
+	// TODO: Just to test
+	fmt.Println("Repos:", len(l))
 
-	uuid := uuid.New()
-	folder := fmt.Sprintf("/tmp/%s", uuid.String())
-
-	repositories := []string{
-		"https://github.com/alainrk/multigitter-test-1.git",
-		"https://github.com/alainrk/multigitter-test-2.git",
-		"https://github.com/alainrk/multigitter-test-3.git",
+	// Create multigitter folder if it doesn't exist
+	if _, err := os.Stat("/tmp/multigitter"); os.IsNotExist(err) {
+		os.Mkdir("/tmp/multigitter", 0755)
 	}
 
-	// Clone options with authentication
-	auth := &gitHttp.BasicAuth{
-		Username: username,
-		Password: token,
+	// Set a parent folder for this session
+	parentFolder := fmt.Sprintf("/tmp/multigitter/%s", uuid.New().String())
+
+	repositories := map[string]string{
+		"multigitter-test-1": "alainrk/multigitter-test-1",
+		"multigitter-test-2": "alainrk/multigitter-test-2",
+		"multigitter-test-3": "alainrk/multigitter-test-3",
 	}
 
 	// Loop through the list of repositories
-	for _, repo := range repositories {
+	for name, repo := range repositories {
+		fmt.Printf("\n------------------------------\nCloning repo: %s\n", repo)
+		err := cloneRepo(name, repo, parentFolder)
 
-		_, err := git.PlainClone(folder, false, &git.CloneOptions{
-			URL:      repo,
-			Progress: os.Stdout,
-			Auth:     auth,
-		})
+		// All or nothing behavior
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("Error cloning repo: %s", err)
+		}
+	}
+
+	// Show content of the folder
+	cmd := exec.Command("ls", "-la", parentFolder)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
+}
+
+// cloneRepo clones a repository using gh cli inside a given parent folder
+func cloneRepo(name, repo, parentFolder string) error {
+	folder := fmt.Sprintf("%s/%s", parentFolder, name)
+	errors := []error{}
+
+	// Sometimes gh gives "Connection reset by peer", so we have to retry a few times
+	attempts := 3
+	for i := 0; i < attempts; i++ {
+		cmd := exec.Command("gh", "repo", "clone", repo, folder)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err := cmd.Run()
+		if err == nil {
+			return nil
 		}
 
-		fmt.Println("Cloned repo:", repo)
+		errors = append(errors, err)
+
+		// Remove the folder to avoid gh complaining
+		err = os.RemoveAll(folder)
+		if err != nil {
+			log.Fatalf("Error removing folder %s: %s", folder, err)
+		}
+
+		if i <= attempts-1 {
+			fmt.Printf("Retrying (%d/%d)...\n", i+1, attempts)
+			continue
+		}
 	}
+
+	errorMsg := ""
+	for _, err := range errors {
+		errorMsg += fmt.Sprintf("%s\n", err)
+	}
+
+	return fmt.Errorf("failed to clone repository %s: %v", repo, errorMsg)
 }
