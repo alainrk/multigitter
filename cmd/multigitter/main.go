@@ -51,7 +51,7 @@ func main() {
 
 	// Get or create the branch we want to work with
 	// TODO: Maybe I just want to first check if it already exists and create another one if so
-	branch, err := getBranch(client, username, repo.GetName(), "test-branch", "main", ctx)
+	branch, err := getBranch(client, username, repo.GetName(), "test-branch-5", "main", ctx)
 	if err != nil {
 		log.Fatalf("Error getting branch: %s", err)
 	}
@@ -61,7 +61,7 @@ func main() {
 	// Create a file in the branch.
 	// It doesn't complain if it exists, and just returns the same commit.
 	client.Repositories.CreateFile(ctx, username, repo.GetName(), "branch_file.md", &github.RepositoryContentFileOptions{
-		Message: github.String("testing branches"),
+		Message: github.String("testing branches 2"),
 		Content: []byte(`test`),
 		Branch:  branch.Ref,
 	})
@@ -77,7 +77,7 @@ func main() {
 		log.Fatalf("Error creating pull request: %s", err)
 	}
 
-	fmt.Println("Pull request:", pr)
+	fmt.Println("Pull request:", pr.GetHTMLURL())
 
 	// Get content of a file or folder
 	// f, d, r, err := client.Repositories.GetContents(ctx, username, repo.GetName(), "README.md", nil)
