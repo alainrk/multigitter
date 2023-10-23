@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 
 	"github.com/google/go-github/github"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
+
+// repositories := map[string]string{
+// 	"multigitter-test-1": "alainrk/multigitter-test-1",
+// 	"multigitter-test-2": "alainrk/multigitter-test-2",
+// 	"multigitter-test-3": "alainrk/multigitter-test-3",
+// }
 
 func main() {
 	err := godotenv.Load(".env")
@@ -19,8 +24,10 @@ func main() {
 		log.Fatalf("Error loading .env file")
 	}
 
+	username := os.Getenv("GITHUB_USERNAME")
 	token := os.Getenv("GITHUB_TOKEN")
-	// password := os.Getenv("GITHUB_PASSWORD")
+
+	fmt.Println("Github username used:", username)
 
 	// Create a GitHub client
 	ctx := context.Background()
@@ -30,80 +37,77 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
-	l, _, err := client.Repositories.List(ctx, "", nil)
+	name := "alainrk/multigitter-test-1"
+
+	// Search for the repository we want to work with
+	l, _, err := client.Search.Repositories(ctx, name, &github.SearchOptions{})
 	if err != nil {
 		log.Fatalf("Error listing repos: %s", err)
 	}
-	// TODO: Just to test
-	fmt.Println("Repos:", len(l))
+	if len(l.Repositories) != 1 {
+		log.Fatalf("Unexpected number of repositories for repository '%s': %d", name, len(l.Repositories))
+	}
+	repo := l.Repositories[0]
 
-	// Create multigitter folder if it doesn't exist
-	if _, err := os.Stat("/tmp/multigitter"); os.IsNotExist(err) {
-		os.Mkdir("/tmp/multigitter", 0755)
+	// Get or create the branch we want to work with
+	// TODO: Maybe I just want to first check if it already exists and create another one if so
+	branch, err := getBranch(client, username, repo.GetName(), "test-branch", "main", ctx)
+	if err != nil {
+		log.Fatalf("Error getting branch: %s", err)
 	}
 
-	// Set a parent folder for this session
-	parentFolder := fmt.Sprintf("/tmp/multigitter/%s", uuid.New().String())
+	fmt.Println("Working branch:", branch)
 
-	repositories := map[string]string{
-		"multigitter-test-1": "alainrk/multigitter-test-1",
-		"multigitter-test-2": "alainrk/multigitter-test-2",
-		"multigitter-test-3": "alainrk/multigitter-test-3",
+	// Create a file in the branch.
+	// It doesn't complain if it exists, and just returns the same commit.
+	client.Repositories.CreateFile(ctx, username, repo.GetName(), "branch_file.md", &github.RepositoryContentFileOptions{
+		Message: github.String("testing branches"),
+		Content: []byte(`test`),
+		Branch:  branch.Ref,
+	})
+
+	// Open a pull request with that branch and commit
+	pr, _, err := client.PullRequests.Create(ctx, username, repo.GetName(), &github.NewPullRequest{
+		Title: github.String("Testing multigitter file creation and PR"),
+		Head:  branch.Ref,
+		Base:  github.String("main"),
+		Body:  github.String("And that's all"),
+	})
+	if err != nil {
+		log.Fatalf("Error creating pull request: %s", err)
 	}
 
-	// Loop through the list of repositories
-	for name, repo := range repositories {
-		fmt.Printf("\n------------------------------\nCloning repo: %s\n", repo)
-		err := cloneRepo(name, repo, parentFolder)
+	fmt.Println("Pull request:", pr)
 
-		// All or nothing behavior
-		if err != nil {
-			log.Fatalf("Error cloning repo: %s", err)
-		}
-	}
+	// Get content of a file or folder
+	// f, d, r, err := client.Repositories.GetContents(ctx, username, repo.GetName(), "README.md", nil)
+	// if err != nil {
+	// 	log.Fatalf("Error getting contents: %s", err)
+	// }
+	// fmt.Println("File:", f)
+	// fmt.Println("Directory:", d)
+	// fmt.Println("Repo:", r)
 
-	// Show content of the folder
-	cmd := exec.Command("ls", "-la", parentFolder)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Run()
 }
 
-// cloneRepo clones a repository using gh cli inside a given parent folder
-func cloneRepo(name, repo, parentFolder string) error {
-	folder := fmt.Sprintf("%s/%s", parentFolder, name)
-	errors := []error{}
-
-	// Sometimes gh gives "Connection reset by peer", so we have to retry a few times
-	attempts := 3
-	for i := 0; i < attempts; i++ {
-		cmd := exec.Command("gh", "repo", "clone", repo, folder)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-		if err == nil {
-			return nil
-		}
-
-		errors = append(errors, err)
-
-		// Remove the folder to avoid gh complaining
-		err = os.RemoveAll(folder)
-		if err != nil {
-			log.Fatalf("Error removing folder %s: %s", folder, err)
-		}
-
-		if i <= attempts-1 {
-			fmt.Printf("Retrying (%d/%d)...\n", i+1, attempts)
-			continue
-		}
+func getBranch(client *github.Client, owner string, repo string, branchName string, baseBranch string, ctx context.Context) (ref *github.Reference, err error) {
+	if ref, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branchName); err == nil {
+		return ref, nil
 	}
 
-	errorMsg := ""
-	for _, err := range errors {
-		errorMsg += fmt.Sprintf("%s\n", err)
+	if branchName == baseBranch {
+		return nil, errors.New("the commit branch does not exist but `-base-branch` is the same as `-commit-branch`")
 	}
 
-	return fmt.Errorf("failed to clone repository %s: %v", repo, errorMsg)
+	if baseBranch == "" {
+		return nil, errors.New("the `-base-branch` should not be set to an empty string when the branch specified by `-commit-branch` does not exists")
+	}
+
+	var baseRef *github.Reference
+	if baseRef, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+baseBranch); err != nil {
+		return nil, err
+	}
+	newRef := &github.Reference{Ref: github.String("refs/heads/" + branchName), Object: &github.GitObject{SHA: baseRef.Object.SHA}}
+	ref, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
+	return ref, err
 }
