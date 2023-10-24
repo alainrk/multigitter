@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/google/go-github/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
+
+	"crypto/sha256"
 )
 
 // repositories := map[string]string{
@@ -51,43 +54,60 @@ func main() {
 
 	// Get or create the branch we want to work with
 	// TODO: Maybe I just want to first check if it already exists and create another one if so
-	branch, err := getBranch(client, username, repo.GetName(), "test-branch-5", "main", ctx)
+	branch, err := getBranch(client, username, repo.GetName(), "test-branch", "main", ctx)
 	if err != nil {
 		log.Fatalf("Error getting branch: %s", err)
 	}
 
-	fmt.Println("Working branch:", branch)
+	fmt.Println("Working branch:", branch.GetRef())
 
 	// Create a file in the branch.
 	// It doesn't complain if it exists, and just returns the same commit.
-	client.Repositories.CreateFile(ctx, username, repo.GetName(), "branch_file.md", &github.RepositoryContentFileOptions{
-		Message: github.String("testing branches 2"),
-		Content: []byte(`test`),
+	client.Repositories.CreateFile(ctx, username, repo.GetName(), "README.md", &github.RepositoryContentFileOptions{
+		Message: github.String("Creating readme"),
+		Content: []byte(""),
 		Branch:  branch.Ref,
 	})
 
-	// Open a pull request with that branch and commit
-	pr, _, err := client.PullRequests.Create(ctx, username, repo.GetName(), &github.NewPullRequest{
-		Title: github.String("Testing multigitter file creation and PR"),
-		Head:  branch.Ref,
-		Base:  github.String("main"),
-		Body:  github.String("And that's all"),
+	// Get content of a file or directory
+	f, _, _, err := client.Repositories.GetContents(ctx, username, repo.GetName(), "README.md", nil)
+	if err != nil {
+		log.Fatalf("Error getting content of the file or directory: %v", err)
+	}
+	content, err := f.GetContent()
+	if err != nil {
+		log.Fatalf("Error getting content of the file: %v", err)
+	}
+	// Add a line with the current time to the file
+	content = fmt.Sprintf("%s\n- Updated from API at %s\n", content, time.Now().String())
+	// Calculate sha of a string
+	sha := calculateSHA(content)
+
+	// Update the file in the branch
+	res, _, err := client.Repositories.UpdateFile(ctx, username, repo.GetName(), "README.md", &github.RepositoryContentFileOptions{
+		Message: github.String("Updating readme"),
+		Content: []byte(content),
+		Branch:  branch.Ref,
+		SHA:     &sha,
 	})
 	if err != nil {
-		log.Fatalf("Error creating pull request: %s", err)
+		log.Fatalf("Error updating file: %v", err)
 	}
 
-	fmt.Println("Pull request:", pr.GetHTMLURL())
+	fmt.Printf("Updated file: %v\n", res)
 
-	// Get content of a file or folder
-	// f, d, r, err := client.Repositories.GetContents(ctx, username, repo.GetName(), "README.md", nil)
+	// Open a pull request with that branch and commit
+	// pr, _, err := client.PullRequests.Create(ctx, username, repo.GetName(), &github.NewPullRequest{
+	// 	Title: github.String("Testing multigitter file creation and PR"),
+	// 	Head:  branch.Ref,
+	// 	Base:  github.String("main"),
+	// 	Body:  github.String("And that's all"),
+	// })
 	// if err != nil {
-	// 	log.Fatalf("Error getting contents: %s", err)
+	// 	log.Fatalf("Error creating pull request: %s", err)
 	// }
-	// fmt.Println("File:", f)
-	// fmt.Println("Directory:", d)
-	// fmt.Println("Repo:", r)
 
+	// fmt.Println("Pull request:", pr.GetHTMLURL())
 }
 
 func getBranch(client *github.Client, owner string, repo string, branchName string, baseBranch string, ctx context.Context) (ref *github.Reference, err error) {
@@ -110,4 +130,11 @@ func getBranch(client *github.Client, owner string, repo string, branchName stri
 	newRef := &github.Reference{Ref: github.String("refs/heads/" + branchName), Object: &github.GitObject{SHA: baseRef.Object.SHA}}
 	ref, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
 	return ref, err
+}
+
+func calculateSHA(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	bs := h.Sum(nil)
+	return string(bs[:])
 }
