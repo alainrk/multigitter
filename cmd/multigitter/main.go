@@ -48,11 +48,11 @@ func main() {
 	if len(l.Repositories) != 1 {
 		log.Fatalf("Unexpected number of repositories for repository '%s': %d", name, len(l.Repositories))
 	}
-	repo := l.Repositories[0]
+	currentRepo := l.Repositories[0]
 
 	// Get or create the branch we want to work with
 	// TODO: Maybe I just want to first check if it already exists and create another one if so
-	branch, err := getBranch(client, username, repo.GetName(), "test-branch", "main", ctx)
+	branch, err := getBranch(client, username, currentRepo.GetName(), "test-branch", "main", ctx)
 	if err != nil {
 		log.Fatalf("Error getting branch: %s", err)
 	}
@@ -61,14 +61,14 @@ func main() {
 
 	// Create a file in the branch.
 	// It doesn't complain if it exists, and just returns the same commit.
-	client.Repositories.CreateFile(ctx, username, repo.GetName(), "README.md", &github.RepositoryContentFileOptions{
+	client.Repositories.CreateFile(ctx, username, currentRepo.GetName(), "README.md", &github.RepositoryContentFileOptions{
 		Message: github.String("Creating readme"),
 		Content: []byte(""),
 		Branch:  branch.Ref,
 	})
 
 	// Get content of a file or directory
-	f, _, _, err := client.Repositories.GetContents(ctx, username, repo.GetName(), "README.md", nil)
+	f, _, _, err := client.Repositories.GetContents(ctx, username, currentRepo.GetName(), "README.md", nil)
 	if err != nil {
 		log.Fatalf("Error getting content of the file or directory: %v", err)
 	}
@@ -81,7 +81,7 @@ func main() {
 
 	// Update the file in the branch
 	sha := github.String(f.GetSHA())
-	res, _, err := client.Repositories.UpdateFile(ctx, username, repo.GetName(), "README.md", &github.RepositoryContentFileOptions{
+	res, _, err := client.Repositories.UpdateFile(ctx, username, currentRepo.GetName(), "README.md", &github.RepositoryContentFileOptions{
 		Message: github.String("Updating readme"),
 		Content: []byte(content),
 		Branch:  branch.Ref,
