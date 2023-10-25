@@ -11,8 +11,6 @@ import (
 	"github.com/google/go-github/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
-
-	"crypto/sha256"
 )
 
 // repositories := map[string]string{
@@ -80,21 +78,20 @@ func main() {
 	}
 	// Add a line with the current time to the file
 	content = fmt.Sprintf("%s\n- Updated from API at %s\n", content, time.Now().String())
-	// Calculate sha of a string
-	sha := calculateSHA(content)
 
 	// Update the file in the branch
+	sha := github.String(f.GetSHA())
 	res, _, err := client.Repositories.UpdateFile(ctx, username, repo.GetName(), "README.md", &github.RepositoryContentFileOptions{
 		Message: github.String("Updating readme"),
 		Content: []byte(content),
 		Branch:  branch.Ref,
-		SHA:     &sha,
+		SHA:     sha,
 	})
 	if err != nil {
 		log.Fatalf("Error updating file: %v", err)
 	}
 
-	fmt.Printf("Updated file: %v\n", res)
+	fmt.Printf("Updated file: %v\n", res.GetHTMLURL())
 
 	// Open a pull request with that branch and commit
 	// pr, _, err := client.PullRequests.Create(ctx, username, repo.GetName(), &github.NewPullRequest{
@@ -112,6 +109,7 @@ func main() {
 
 func getBranch(client *github.Client, owner string, repo string, branchName string, baseBranch string, ctx context.Context) (ref *github.Reference, err error) {
 	if ref, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branchName); err == nil {
+		fmt.Printf("Branch '%s' already exists, returning it\n", branchName)
 		return ref, nil
 	}
 
@@ -130,11 +128,4 @@ func getBranch(client *github.Client, owner string, repo string, branchName stri
 	newRef := &github.Reference{Ref: github.String("refs/heads/" + branchName), Object: &github.GitObject{SHA: baseRef.Object.SHA}}
 	ref, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
 	return ref, err
-}
-
-func calculateSHA(s string) string {
-	h := sha256.New()
-	h.Write([]byte(s))
-	bs := h.Sum(nil)
-	return string(bs[:])
 }
