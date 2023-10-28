@@ -50,21 +50,21 @@ func main() {
 	}
 	currentRepo := l.Repositories[0]
 
-	// Get or create the branch we want to work with
+	// Get or create the currentBranch we want to work with
 	// TODO: Maybe I just want to first check if it already exists and create another one if so
-	branch, err := getBranch(client, username, currentRepo.GetName(), "test-branch", "main", ctx)
+	currentBranch, err := getOrCreateBranch(client, username, currentRepo.GetName(), "test-branch-3", "main", ctx)
 	if err != nil {
 		log.Fatalf("Error getting branch: %s", err)
 	}
 
-	fmt.Println("Working branch:", branch.GetRef())
+	fmt.Println("Working branch:", currentBranch.GetRef())
 
 	// Create a file in the branch.
 	// It doesn't complain if it exists, and just returns the same commit.
 	client.Repositories.CreateFile(ctx, username, currentRepo.GetName(), "README.md", &github.RepositoryContentFileOptions{
 		Message: github.String("Creating readme"),
 		Content: []byte(""),
-		Branch:  branch.Ref,
+		Branch:  currentBranch.Ref,
 	})
 
 	// Get content of a file or directory
@@ -77,15 +77,22 @@ func main() {
 		log.Fatalf("Error getting content of the file: %v", err)
 	}
 	// Add a line with the current time to the file
+	fmt.Println("Current content:", content)
 	content = fmt.Sprintf("%s\n- Updated from API at %s\n", content, time.Now().String())
 
 	// Update the file in the branch
 	sha := github.String(f.GetSHA())
+
+	fmt.Println("Current SHA:", *sha)
+	resSha, _, _ := client.Repositories.GetCommitSHA1(ctx, username, currentRepo.GetName(), currentBranch.GetRef(), *sha)
+	fmt.Println("ResSHA:", resSha)
+
 	res, _, err := client.Repositories.UpdateFile(ctx, username, currentRepo.GetName(), "README.md", &github.RepositoryContentFileOptions{
 		Message: github.String("Updating readme"),
 		Content: []byte(content),
-		Branch:  branch.Ref,
-		SHA:     sha,
+		Branch:  currentBranch.Ref,
+		SHA:     f.SHA,
+		// SHA: &resSha,
 	})
 	if err != nil {
 		log.Fatalf("Error updating file: %v", err)
@@ -107,18 +114,18 @@ func main() {
 	// fmt.Println("Pull request:", pr.GetHTMLURL())
 }
 
-func getBranch(client *github.Client, owner string, repo string, branchName string, baseBranch string, ctx context.Context) (ref *github.Reference, err error) {
-	if ref, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branchName); err == nil {
-		fmt.Printf("Branch '%s' already exists, returning it\n", branchName)
-		return ref, nil
-	}
-
+func getOrCreateBranch(client *github.Client, owner string, repo string, branchName string, baseBranch string, ctx context.Context) (ref *github.Reference, err error) {
 	if branchName == baseBranch {
 		return nil, errors.New("the commit branch does not exist but `-base-branch` is the same as `-commit-branch`")
 	}
 
 	if baseBranch == "" {
 		return nil, errors.New("the `-base-branch` should not be set to an empty string when the branch specified by `-commit-branch` does not exists")
+	}
+
+	if ref, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branchName); err == nil {
+		fmt.Printf("Branch '%s' already exists, returning it\n", branchName)
+		return ref, nil
 	}
 
 	var baseRef *github.Reference
@@ -128,4 +135,11 @@ func getBranch(client *github.Client, owner string, repo string, branchName stri
 	newRef := &github.Reference{Ref: github.String("refs/heads/" + branchName), Object: &github.GitObject{SHA: baseRef.Object.SHA}}
 	ref, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
 	return ref, err
+}
+
+func getBranch(client *github.Client, owner string, repo string, branchName string, ctx context.Context) (ref *github.Reference, err error) {
+	if ref, _, err = client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branchName); err != nil {
+		return nil, err
+	}
+	return ref, nil
 }
